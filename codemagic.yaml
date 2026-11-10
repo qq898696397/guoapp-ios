@@ -15,7 +15,7 @@ workflows:
         - $HOME/go/pkg/mod
         - $HOME/Library/Caches/CocoaPods
     scripts:
-      - name: Go toolchain
+      - name: Toolchain check
         script: |
           set -e
           if ! command -v go >/dev/null 2>&1; then brew install go; fi
@@ -23,6 +23,8 @@ workflows:
           flutter --version
           pod --version
           python3 --version
+          xcodebuild -version
+          df -h /
 
       - name: Build Go core and unsigned iOS package
         script: |
@@ -50,11 +52,3 @@ workflows:
       - dist/ios/*.ipa
       - dist/ios/*-app.zip
       - dist/ios/SHA256SUMS.txt
-
-    publishing:
-      email:
-        recipients:
-          - placeholder@example.com
-        notify:
-          success: true
-          failure: true
