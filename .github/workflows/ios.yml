@@ -63,21 +63,11 @@ jobs:
           xcodebuild -version
           df -h /
 
-      - name: 选择最新 Xcode 并释放磁盘空间
+      - name: Xcode 信息（不做切换，避免误删可用 Xcode）
         run: |
-          set -euo pipefail
-          CURRENT="$(xcode-select -p | sed 's|/Contents/Developer||')"
-          LATEST="$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)"
-          echo "当前: $CURRENT"
-          echo "最新: $LATEST"
-          for app in /Applications/Xcode*.app; do
-            if [ "$app" != "$LATEST" ]; then sudo rm -rf "$app" || true; fi
-          done
-          sudo xcode-select -s "$LATEST"
           xcodebuild -version
-          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
-          rm -rf ~/Library/Developer/CoreSimulator/Caches || true
-          rm -rf ~/Library/Developer/Xcode/DerivedData || true
+          echo "developer dir: $(xcode-select -p)"
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
           df -h /
 
       - uses: actions/setup-python@v5
