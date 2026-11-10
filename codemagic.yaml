@@ -1,0 +1,60 @@
+workflows:
+  ios-unsigned:
+    name: 真果鉴 iOS 未签名 IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      flutter: 3.47.4
+      xcode: latest
+      cocoapods: default
+      vars:
+        EDITION: zhenguojian
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/go/pkg/mod
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - name: Go toolchain
+        script: |
+          set -e
+          if ! command -v go >/dev/null 2>&1; then brew install go; fi
+          go version
+          flutter --version
+          pod --version
+          python3 --version
+
+      - name: Build Go core and unsigned iOS package
+        script: |
+          set -e
+          export GOPROXY=https://proxy.golang.org,direct
+          export GOSUMDB=sum.golang.org
+          if [ "$EDITION" = "zhenguojian" ]; then
+            python3 scripts/build_ios.py --all-sources
+          else
+            python3 scripts/build_ios.py
+          fi
+
+      - name: Verify IPA structure
+        script: |
+          set -e
+          ls -lh dist/ios
+          for ipa in dist/ios/*-ios-unsigned.ipa; do
+            [ -f "$ipa" ] || continue
+            unzip -l "$ipa" | grep -q 'Payload/Runner.app/Runner'
+            unzip -l "$ipa" | grep -q 'Payload/Runner.app/Info.plist'
+            echo "OK $ipa"
+          done
+
+    artifacts:
+      - dist/ios/*.ipa
+      - dist/ios/*-app.zip
+      - dist/ios/SHA256SUMS.txt
+
+    publishing:
+      email:
+        recipients:
+          - placeholder@example.com
+        notify:
+          success: true
+          failure: true
