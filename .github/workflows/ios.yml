@@ -1,0 +1,170 @@
+name: Build iOS package
+
+# 在 GitHub 的 macOS runner 上构建真果鉴 / 红果鉴 iOS 未签名安装包（IPA）。
+# 用法：Actions → Build iOS package → Run workflow → 选择 zhenguojian（真果鉴）→ Run。
+# 产物：Artifacts 里的 zhenguojian-ios-unsigned（内含 *.ipa / Runner.app zip / SHA256SUMS.txt）；
+#      同时自动发布到 Release（tag: ios-v<版本>），手机可直接下载。
+
+on:
+  workflow_dispatch:
+    inputs:
+      edition:
+        description: '版本：zhenguojian = 真果鉴（全部站源），hongguojian = 红果鉴（仅红果）'
+        required: true
+        default: zhenguojian
+        type: choice
+        options:
+          - zhenguojian
+          - hongguojian
+      flutter_version:
+        description: 'Flutter 版本（工程要求 Dart >= 3.12.0 / Flutter >= 3.44.0）'
+        required: false
+        default: '3.47.4'
+        type: string
+  push:
+    branches: [main, master]
+    paths:
+      - '.github/workflows/ios.yml'
+      - 'ios/**'
+      - 'lib/**'
+      - 'native/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'scripts/build_ios.py'
+      - 'scripts/app_build.py'
+      - 'scripts/configure_ios_branding.py'
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  GOPROXY: https://proxy.golang.org,direct
+  GOSUMDB: sum.golang.org
+  COCOAPODS_DISABLE_STATS: 'true'
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      EDITION: ${{ inputs.edition || 'zhenguojian' }}
+      FLUTTER_VERSION: ${{ inputs.flutter_version || '3.47.4' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 环境信息
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          df -h /
+
+      - name: 选择最新 Xcode 并释放磁盘空间
+        run: |
+          set -euo pipefail
+          CURRENT="$(xcode-select -p | sed 's|/Contents/Developer||')"
+          LATEST="$(ls -d /Applications/Xcode*.app | sort -V | tail -n1)"
+          echo "当前: $CURRENT"
+          echo "最新: $LATEST"
+          for app in /Applications/Xcode*.app; do
+            if [ "$app" != "$LATEST" ]; then sudo rm -rf "$app" || true; fi
+          done
+          sudo xcode-select -s "$LATEST"
+          xcodebuild -version
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
+          rm -rf ~/Library/Developer/CoreSimulator/Caches || true
+          rm -rf ~/Library/Developer/Xcode/DerivedData || true
+          df -h /
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: native/go.mod
+          cache-dependency-path: native/go.sum
+
+      - name: 安装指定 Flutter（失败则回退 stable）
+        id: flutter-pinned
+        continue-on-error: true
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: 回退 stable Flutter
+        if: steps.flutter-pinned.outcome == 'failure'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter 版本确认
+        run: |
+          flutter --version
+          dart --version
+
+      - name: CocoaPods 准备
+        run: |
+          pod --version >/dev/null 2>&1 || sudo gem install cocoapods --no-document
+          pod --version
+
+      - name: 构建 Go 核心并打包 iOS 未签名 IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EDITION" = "zhenguojian" ]; then
+            python3 scripts/build_ios.py --all-sources
+          else
+            python3 scripts/build_ios.py
+          fi
+
+      - name: 校验产物结构
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -lh dist/ios
+          found=0
+          for ipa in dist/ios/*-ios-unsigned.ipa; do
+            [ -f "$ipa" ] || continue
+            found=1
+            echo "== $ipa"
+            unzip -l "$ipa" | head -n 20
+            unzip -l "$ipa" | grep -q 'Payload/Runner.app/Runner' || { echo "IPA 结构缺少 Payload/Runner.app/Runner" >&2; exit 1; }
+            unzip -l "$ipa" | grep -q 'Payload/Runner.app/Info.plist' || { echo "IPA 结构缺少 Info.plist" >&2; exit 1; }
+          done
+          [ "$found" = "1" ] || { echo "未生成 IPA" >&2; exit 1; }
+
+      - name: 读取版本号
+        id: version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n1)"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=ios-v${version//+/-}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.EDITION }}-ios-unsigned
+          path: dist/ios/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 发布到 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          title="iOS 未签名安装包 iOS-v${{ steps.version.outputs.value }}"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$title" --notes "iOS 未签名 IPA。用 Sideloadly / AltStore / TrollStore 自签后安装到 iPhone / iPad（最低 iOS 15.1）。"
+          fi
+          gh release upload "$TAG" dist/ios/* --clobber
