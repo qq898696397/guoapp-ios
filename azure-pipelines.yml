@@ -1,0 +1,56 @@
+trigger: none
+pr: none
+
+pool:
+  vmImage: 'macOS-14'
+
+variables:
+  EDITION: 'zhenguojian'
+
+steps:
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '3.12'
+    displayName: 'Python 3.12'
+
+  - task: GoTool@0
+    inputs:
+      version: '1.24.1'
+    displayName: 'Go 1.24.1'
+
+  - script: |
+      set -e
+      export FLUTTER_HOME="$HOME/flutter"
+      if [ ! -d "$FLUTTER_HOME" ]; then
+        git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$FLUTTER_HOME"
+      fi
+      echo "##vso[task.prependpath]$FLUTTER_HOME/bin"
+      flutter --version
+      dart --version
+      pod --version || sudo gem install cocoapods --no-document
+      xcodebuild -version
+      go version
+    displayName: 'Toolchain (Flutter / CocoaPods / Xcode / Go)'
+
+  - script: |
+      set -e
+      export PATH="$HOME/flutter/bin:$PATH"
+      export GOPROXY=https://proxy.golang.org,direct
+      export GOSUMDB=sum.golang.org
+      python3 scripts/build_ios.py --all-sources
+    displayName: 'Build Go core + unsigned iOS IPA'
+
+  - script: |
+      set -e
+      ls -lh dist/ios
+      for ipa in dist/ios/*-ios-unsigned.ipa; do
+        [ -f "$ipa" ] || continue
+        unzip -l "$ipa" | grep -q 'Payload/Runner.app/Runner'
+        unzip -l "$ipa" | grep -q 'Payload/Runner.app/Info.plist'
+        echo "OK $ipa"
+      done
+    displayName: 'Verify IPA structure'
+
+  - publish: dist/ios
+    artifact: 'zhenguojian-ios-unsigned'
+    displayName: 'Publish IPA artifact'
