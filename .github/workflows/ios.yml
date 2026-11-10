@@ -105,6 +105,11 @@ jobs:
           pod --version >/dev/null 2>&1 || sudo gem install cocoapods --no-document
           pod --version
 
+      - name: 预解析 Dart 依赖（pubspec.lock 落后于 pubspec.yaml，先补全）
+        run: |
+          flutter pub get
+          git --no-pager diff --stat -- pubspec.lock || true
+
       - name: 构建 Go 核心并打包 iOS 未签名 IPA
         shell: bash
         run: |
