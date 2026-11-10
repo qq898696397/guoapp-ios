@@ -63,11 +63,23 @@ jobs:
           xcodebuild -version
           df -h /
 
-      - name: Xcode 信息（不做切换，避免误删可用 Xcode）
+      - name: 选择可用的最新 Xcode（只切换，不删除任何 Xcode）
+        shell: bash
         run: |
-          xcodebuild -version
-          echo "developer dir: $(xcode-select -p)"
+          set -uo pipefail
+          echo "== installed =="
           ls -d /Applications/Xcode*.app 2>/dev/null || true
+          echo "== current =="
+          xcode-select -p || true
+          for candidate in $(ls -d /Applications/Xcode*.app 2>/dev/null | sort -Vr); do
+            if [ -d "$candidate/Contents/Developer" ]; then
+              if sudo xcode-select -s "$candidate" 2>/dev/null; then
+                echo "switched to $candidate"
+                break
+              fi
+            fi
+          done
+          xcodebuild -version
           df -h /
 
       - uses: actions/setup-python@v5
